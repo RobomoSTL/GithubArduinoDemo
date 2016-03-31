@@ -12,8 +12,17 @@
 #define OUTPUT_MIN -127
 #define OUTPUT_MAX 127
 
-/** Median filter to remove spikes with 5 samples */
-RunningMedian channel1RunningMedian(3);
+/* Struct to hold RC channel data */
+struct RC {
+  int rawValue;
+  int filteredValue;
+  int maxValue = INPUT_MAX;
+  int minValue = INPUT_MIN;
+};
+
+RC rc;
+
+RunningMedian runningMedian(3);
 
 void setup() {
   //Start Serial for debuging
@@ -24,13 +33,15 @@ void setup() {
 
 void loop() {
   //Read raw RC values
-  int ch1Val = pulseIn(CH1_PIN, HIGH);
-  //Convert to power
-  int ch1Power = map(ch1Val, INPUT_MIN, INPUT_MAX, OUTPUT_MIN, OUTPUT_MAX);
+  rc.rawValue = pulseIn(CH1_PIN, HIGH);
   //Use Median filter to remove spikes
-  channel1RunningMedian.add(ch1Power);
+  runningMedian.add(rc.rawValue);
+  //Get filtered result
+  rc.filteredValue = runningMedian.getMedian();
+  //Convert to power
+  int ch1Power = map(rc.filteredValue, INPUT_MIN, INPUT_MAX, OUTPUT_MIN, OUTPUT_MAX);
   //Print result
-  Serial.print(ch1Val);
+  Serial.print(rc.filteredValue);
   Serial.print(" => ");
-  Serial.println(channel1RunningMedian.getMedian());
+  Serial.println(ch1Power);
 }
