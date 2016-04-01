@@ -28,6 +28,16 @@ struct RC {
   int minValue = INPUT_MIN;
 };
 
+/* Struct to hold motor states */
+struct Motors{
+  int frontLeft = 0;
+  int frontRight = 0;
+  int rearLeft = 0;
+  int rearRight = 0;
+};
+
+Motors motorsCurrent;
+
 RC rcChannels[CHANNELS];
 
 RunningMedian runningMedian[CHANNELS]{
@@ -48,12 +58,32 @@ void setup() {
 
 void loop() {
   readRc();
-  //Convert to power
-  int ch1Power = map(rcChannels[0].filteredValue, INPUT_MIN, INPUT_MAX, OUTPUT_MIN, OUTPUT_MAX);
-  //Print result
-  Serial.print(rcChannels[0].filteredValue);
-  Serial.print(" => ");
-  Serial.println(ch1Power);
+  updateMotors(rcChannels[2].filteredValue, rcChannels[1].filteredValue, rcChannels[0].filteredValue, rcChannels[3].filteredValue);
+  driveMotors();
+}
+
+void driveMotors(){
+  Serial.print("Front Left: ");
+  Serial.println(motorsCurrent.frontLeft);
+  Serial.print("Front Right: ");
+  Serial.println(motorsCurrent.frontRight);
+  Serial.print("Rear Left: ");
+  Serial.println(motorsCurrent.rearLeft);
+  Serial.print("Rear Right: ");
+  Serial.println(motorsCurrent.rearRight);
+}
+
+void updateMotors(int maxPower, int baseSpeed, int inDir, int inStrafe){
+    int minSpeed =  constrain(map(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MIN), OUTPUT_MIN, OUTPUT_MAX);
+    int maxSpeed =  constrain(map(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MAX), OUTPUT_MIN, OUTPUT_MAX);
+    int mSpeed = map(baseSpeed, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
+    int strafe = map(inStrafe, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
+    int dir = map(inDir, INPUT_MAX, INPUT_MIN, minSpeed, maxSpeed);
+    
+    motorsCurrent.rearRight = constrain(mSpeed + dir + strafe, minSpeed, maxSpeed);
+    motorsCurrent.rearLeft = constrain(mSpeed - dir - strafe, minSpeed, maxSpeed);
+    motorsCurrent.frontRight = constrain(mSpeed + dir - strafe, minSpeed, maxSpeed);
+    motorsCurrent.frontLeft = constrain(mSpeed - dir + strafe, minSpeed, maxSpeed);
 }
 
 void readRc(){
