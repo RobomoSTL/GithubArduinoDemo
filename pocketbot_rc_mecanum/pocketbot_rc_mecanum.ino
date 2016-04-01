@@ -2,6 +2,8 @@
 * Demo app showing Pocket/RC control of a Mecanum Wheeled Robot
 */
 #include <RunningMedian.h>
+#include <Adafruit_MotorShield.h>
+#include <Wire.h>
 
 #define CH1_PIN 3
 #define CH2_PIN 4
@@ -49,11 +51,19 @@ RunningMedian runningMedian[CHANNELS]{
   RunningMedian(3),
 };
 
+Adafruit_MotorShield AFMS = Adafruit_MotorShield();
+Adafruit_DCMotor *motorRearLeft = AFMS.getMotor(1);
+Adafruit_DCMotor *motorRearRight = AFMS.getMotor(2);
+Adafruit_DCMotor *motorFrontLeft = AFMS.getMotor(4);
+Adafruit_DCMotor *motorFrontRight = AFMS.getMotor(3);
+
 void setup() {
   //Start Serial for debuging
   Serial.begin(115200);
   //Start RC
   initRc();
+  //Start Adafruit motor shield
+  AFMS.begin();
 }
 
 void loop() {
@@ -71,6 +81,40 @@ void driveMotors(){
   Serial.println(motorsCurrent.rearLeft);
   Serial.print("Rear Right: ");
   Serial.println(motorsCurrent.rearRight);
+  
+    //Set motors to FORWARD or BACKWARD
+    if(motorsCurrent.rearLeft < 0){
+      motorRearLeft->run(BACKWARD);
+    } else {
+      motorRearLeft->run(FORWARD);
+    }
+    if(motorsCurrent.rearRight < 0){
+      motorRearRight->run(BACKWARD);
+    } else {
+      motorRearRight->run(FORWARD);
+    }
+    if (motorsCurrent.frontLeft < 0) {
+      motorFrontLeft->run(BACKWARD);
+    } else {
+      motorFrontLeft->run(FORWARD);
+    }
+    if (motorsCurrent.frontRight < 0) {
+      motorFrontRight->run(BACKWARD);
+    } else {
+      motorFrontRight->run(FORWARD);
+    }
+    
+    //Adjust power from -127:127 to 1:255
+    int frontRight = abs(motorsCurrent.frontRight) * 2 + 1;
+    int frontLeft = abs(motorsCurrent.frontLeft) * 2 + 1;
+    int rearRight = abs(motorsCurrent.rearRight) * 2 + 1;
+    int rearLeft = abs(motorsCurrent.rearLeft) * 2 + 1;
+    
+    //Set motor speeds
+    motorRearRight->setSpeed(rearRight);
+    motorRearLeft->setSpeed(rearLeft);		
+    motorFrontRight->setSpeed(frontRight);
+    motorFrontLeft->setSpeed(frontLeft);
 }
 
 void updateMotors(int maxPower, int baseSpeed, int inDir, int inStrafe){
