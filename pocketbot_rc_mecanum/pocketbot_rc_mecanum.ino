@@ -5,6 +5,7 @@
 #include <Adafruit_MotorShield.h>
 #include <Wire.h>
 
+
 #define CH1_PIN 3
 #define CH2_PIN 4
 #define CH3_PIN 5
@@ -12,23 +13,51 @@
 #define CH5_PIN 7
 #define CH6_PIN 8
 
-//Min and Max values from RC Channel
-#define INPUT_MIN 993
-#define INPUT_MAX 1977
-//Min and Max values for Motors
-#define OUTPUT_MIN -127
-#define OUTPUT_MAX 127
+#define USE_POCKET_BOT 1
+#define USE_RC 0
 
-#define CHANNELS 6
+#if USE_POCKET_BOT
+  #include <PocketBot.h> // https://github.com/frankjoshua/PocketBot
+  /* This will be used to decode messages from the Android device */
+  PocketBot pocketBot;
+  /* Allocate space for the decoded message. */
+  PocketBotMessage message = PocketBotMessage_init_zero;
+  //Min and Max values from input
+  #define INPUT_MIN -1
+  #define INPUT_MAX 1
+#endif
+#if USE_RC
+  //Min and Max values from input
+  #define INPUT_MIN 993
+  #define INPUT_MAX 1977
+  #define CHANNELS 6
 
-/* Struct to hold RC channel data */
-struct RC {
+  /* Struct to hold RC channel data */
+  struct RC {
   int pin;
   int rawValue;
   int filteredValue;
   int maxValue = INPUT_MAX;
   int minValue = INPUT_MIN;
-};
+  };
+  
+  RC rcChannels[CHANNELS];
+  
+  #define SAMPLES 1
+  RunningMedian runningMedian[CHANNELS]{
+    RunningMedian(SAMPLES),
+    RunningMedian(SAMPLES),
+    RunningMedian(SAMPLES),
+    RunningMedian(SAMPLES),
+    RunningMedian(SAMPLES),
+    RunningMedian(SAMPLES),
+  };
+#endif
+
+
+//Min and Max values for Motors
+#define OUTPUT_MIN -127
+#define OUTPUT_MAX 127
 
 /* Struct to hold motor states */
 struct Motors{
@@ -38,50 +67,27 @@ struct Motors{
   int rearRight = 0;
 };
 
+//Hold current state of the motors
 Motors motorsCurrent;
 
-RC rcChannels[CHANNELS];
-
-RunningMedian runningMedian[CHANNELS]{
-  RunningMedian(3),
-  RunningMedian(3),
-  RunningMedian(3),
-  RunningMedian(3),
-  RunningMedian(3),
-  RunningMedian(3),
-};
-
+//Setup Adafruit motor shield
 Adafruit_MotorShield AFMS = Adafruit_MotorShield();
 Adafruit_DCMotor *motorRearLeft = AFMS.getMotor(1);
 Adafruit_DCMotor *motorRearRight = AFMS.getMotor(2);
 Adafruit_DCMotor *motorFrontLeft = AFMS.getMotor(4);
 Adafruit_DCMotor *motorFrontRight = AFMS.getMotor(3);
 
-void setup() {
-  //Start Serial for debuging
-  Serial.begin(115200);
-  //Start RC
-  initRc();
-  //Start Adafruit motor shield
-  AFMS.begin();
-}
+//Time since last motor update
+int mLastMotorUpdate = 0;
 
-void loop() {
-  readRc();
-  updateMotors(rcChannels[2].filteredValue, rcChannels[1].filteredValue, rcChannels[0].filteredValue, rcChannels[3].filteredValue);
-  driveMotors();
+/*
+* Helper function to map Floats, based on Arduino map()
+*/
+float mapfloat(float x, float in_min, float in_max, float out_min, float out_max){
+ return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 
 void driveMotors(){
-  Serial.print("Front Left: ");
-  Serial.println(motorsCurrent.frontLeft);
-  Serial.print("Front Right: ");
-  Serial.println(motorsCurrent.frontRight);
-  Serial.print("Rear Left: ");
-  Serial.println(motorsCurrent.rearLeft);
-  Serial.print("Rear Right: ");
-  Serial.println(motorsCurrent.rearRight);
-  
     //Set motors to FORWARD or BACKWARD
     if(motorsCurrent.rearLeft < 0){
       motorRearLeft->run(BACKWARD);
@@ -117,12 +123,12 @@ void driveMotors(){
     motorFrontLeft->setSpeed(frontLeft);
 }
 
-void updateMotors(int maxPower, int baseSpeed, int inDir, int inStrafe){
-    int minSpeed =  constrain(map(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MIN), OUTPUT_MIN, OUTPUT_MAX);
-    int maxSpeed =  constrain(map(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MAX), OUTPUT_MIN, OUTPUT_MAX);
-    int mSpeed = map(baseSpeed, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
-    int strafe = map(inStrafe, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
-    int dir = map(inDir, INPUT_MAX, INPUT_MIN, minSpeed, maxSpeed);
+void updateMotors(float maxPower, float baseSpeed, float inDir, float inStrafe){
+    int minSpeed =  constrain(mapfloat(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MIN), OUTPUT_MIN, OUTPUT_MAX);
+    int maxSpeed =  constrain(mapfloat(maxPower, INPUT_MIN, INPUT_MAX, 0, OUTPUT_MAX), OUTPUT_MIN, OUTPUT_MAX);
+    int mSpeed = mapfloat(baseSpeed, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
+    int strafe = mapfloat(inStrafe, INPUT_MIN, INPUT_MAX, minSpeed, maxSpeed);
+    int dir = mapfloat(inDir, INPUT_MAX, INPUT_MIN, minSpeed, maxSpeed);
     
     motorsCurrent.rearRight = constrain(mSpeed + dir + strafe, minSpeed, maxSpeed);
     motorsCurrent.rearLeft = constrain(mSpeed - dir - strafe, minSpeed, maxSpeed);
@@ -130,27 +136,62 @@ void updateMotors(int maxPower, int baseSpeed, int inDir, int inStrafe){
     motorsCurrent.frontLeft = constrain(mSpeed - dir + strafe, minSpeed, maxSpeed);
 }
 
-void readRc(){
-  //Loop through rc channels and get filtered value
-  for(int i = 0; i < CHANNELS; i++){
-    //Read raw RC values
-    rcChannels[i].rawValue = pulseIn(rcChannels[i].pin, HIGH);
-    //Use Median filter to remove spikes
-    runningMedian[i].add(rcChannels[i].rawValue);
-    //Get filtered result
-    rcChannels[i].filteredValue = runningMedian[i].getMedian();
+#if USE_RC
+  void readRc(){
+    //Loop through rc channels and get filtered value
+    for(int i = 0; i < CHANNELS; i++){
+      //Read raw RC values
+      rcChannels[i].rawValue = constrain(pulseIn(rcChannels[i].pin, HIGH), INPUT_MIN, INPUT_MAX);
+      //Use Median filter to remove spikes
+      runningMedian[i].add(rcChannels[i].rawValue);
+      //Get filtered result
+      rcChannels[i].filteredValue = runningMedian[i].getMedian();
+    }
   }
+
+  void initRc(){
+    //Set RC pins to input
+    rcChannels[0].pin = CH1_PIN;
+    rcChannels[1].pin = CH2_PIN;
+    rcChannels[2].pin = CH3_PIN;
+    rcChannels[3].pin = CH4_PIN;
+    rcChannels[4].pin = CH5_PIN;
+    rcChannels[5].pin = CH6_PIN;
+    for(int i = 0; i < CHANNELS; i++){
+      pinMode(rcChannels[i].pin, INPUT);
+    }
+  }
+#endif
+
+void setup() {
+  //Start Serial for PocketBot
+  Serial.begin(115200);
+  #if USE_RC
+    //Start RC
+    initRc();
+  #endif
+  //Start Adafruit motor shield
+  AFMS.begin();
 }
 
-void initRc(){
-  //Set RC pins to input
-  rcChannels[0].pin = CH1_PIN;
-  rcChannels[1].pin = CH2_PIN;
-  rcChannels[2].pin = CH3_PIN;
-  rcChannels[3].pin = CH4_PIN;
-  rcChannels[4].pin = CH5_PIN;
-  rcChannels[5].pin = CH6_PIN;
-  for(int i = 0; i < CHANNELS; i++){
-    pinMode(rcChannels[i].pin, INPUT);
+void loop() {
+
+  if(millis() - mLastMotorUpdate > 50){
+    mLastMotorUpdate = millis();
+    driveMotors();
+  } else {
+    #if USE_RC
+    readRc();
+    updateMotors(rcChannels[2].filteredValue, rcChannels[1].filteredValue,
+                rcChannels[0].filteredValue, rcChannels[3].filteredValue);
+    #endif
+    #if USE_POCKET_BOT
+      //Check for PocketBot message
+      if(pocketBot.read(Serial, message)){
+        /* This code will only be called if a complete message is received*/
+        updateMotors(message.control.joy2.Y, message.control.joy1.Y,
+                    message.control.joy1.X, message.control.joy2.X);
+      }
+    #endif
   }
 }
